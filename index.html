@@ -1,190 +1,196 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="bn">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Neon Color Maze</title>
-    <style>
-        body {
-            margin: 0;
-            background-color: #050505;
-            color: white;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            overflow: hidden;
-        }
-
-        #game-container {
-            position: relative;
-            box-shadow: 0 0 50px rgba(0, 255, 255, 0.1);
-            border: 2px solid #333;
-        }
-
-        canvas {
-            display: block;
-            background-color: #111;
-        }
-
-        #ui-layer {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            pointer-events: none;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-        }
-
-        .message {
-            font-size: 3rem;
-            font-weight: bold;
-            text-shadow: 0 0 20px currentColor;
-            display: none;
-            text-align: center;
-        }
-
-        #controls-hint {
-            margin-top: 10px;
-            color: #666;
-            font-size: 0.9rem;
-        }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>মাল্টিপ্লেয়ার টিক-ট্যাক-টো (সার্ভার ছাড়া)</title>
+  <!-- PeerJS CDN: কোনো সার্ভার ছাড়াই P2P কানেকশন তৈরি করে -->
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;font-family:system-ui,-apple-system,sans-serif}
+    body{background:linear-gradient(135deg,#667eea,#764ba2);min-height:100vh;display:flex;justify-content:center;align-items:center;padding:20px}
+    .container{background:#fff;border-radius:16px;padding:24px;max-width:420px;width:100%;box-shadow:0 10px 30px rgba(0,0,0,.3);text-align:center}
+    h1{color:#667eea;margin-bottom:8px}
+    .panel{margin:12px 0;padding:12px;background:#f4f6ff;border-radius:10px}
+    input,button{padding:10px 14px;border:1px solid #ccc;border-radius:8px;font-size:14px;width:100%;margin:4px 0}
+    button{background:#667eea;color:#fff;border:none;cursor:pointer;font-weight:600}
+    button:hover{background:#5568d3}
+    button:disabled{background:#aaa;cursor:not-allowed}
+    #status{font-weight:600;margin:12px 0;padding:10px;background:#e8f4fd;border-radius:8px;min-height:40px}
+    .board{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:16px auto;max-width:300px}
+    .cell{aspect-ratio:1;background:#f9fafb;border:2px solid #667eea;border-radius:10px;font-size:2.5rem;font-weight:bold;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:.2s}
+    .cell:hover:not(.filled){background:#eef2ff}
+    .cell.filled{cursor:default}
+    .x{color:#e63946}
+    .o{color:#4361ee}
+    .hidden{display:none}
+    #peer-id-box{background:#e8f4fd;padding:8px;border-radius:6px;margin:8px 0;font-family:monospace;word-break:break-all}
+    .copy-btn{background:#10b981;padding:6px 10px;font-size:12px;width:auto;margin-left:6px}
+    #log{font-size:12px;color:#666;margin-top:12px;max-height:80px;overflow-y:auto;text-align:left}
+  </style>
 </head>
 <body>
-
-    <div id="game-container">
-        <canvas id="gameCanvas" width="800" height="600"></canvas>
-        <div id="ui-layer">
-            <div id="msg-win" class="message" style="color: #00FF55;">LEVEL COMPLETE!</div>
-            <div id="msg-lose" class="message" style="color: #FF0055;">CRASHED!</div>
+<div class="container">
+  <h1>❌ টিক-ট্যাক-টো ⭕</h1>
+  
+  <div id="lobby">
+    <div class="panel">
+      <button id="hostBtn">🏠 হোস্ট হোন (নতুন গেম)</button>
+      <div id="host-ui" class="hidden">
+        <p>আপনার পিয়ার আইডি (ফ্রেন্ডকে দিন):</p>
+        <div style="display:flex;align-items:center">
+          <div id="peer-id-box" id="myId">লোড হচ্ছে...</div>
+          <button class="copy-btn" onclick="copyId()">কপি</button>
         </div>
+        <p style="font-size:12px;color:#666;margin-top:6px">অপেক্ষা করুন... যখন কেউ জয়েন করবে গেম শুরু হবে</p>
+      </div>
     </div>
-    <div id="controls-hint">Use Arrow Keys or WASD to move. Match wall colors!</div>
 
-    <!-- Import Utils -->
-    <script src="utils/input.js"></script>
-    <script src="utils/physics.js"></script>
-    <script src="utils/renderer.js"></script>
+    <div class="panel">
+      <input id="joinId" placeholder="হোস্টের পিয়ার আইডি পেস্ট করুন">
+      <button id="joinBtn">🔗 গেস্ট হিসেবে জয়েন করুন</button>
+    </div>
+  </div>
 
-    <script>
-        // --- Game State & Logic ---
-        const Game = {
-            canvas: document.getElementById('gameCanvas'),
-            levels: [],
-            currentLevelIdx: 0,
-            player: { x: 0, y: 0, radius: 10, color: '#FF0055', speed: 3 },
-            colors: ['#FF0055', '#00FF55', '#00CCFF', '#FFFF00'], // Red, Green, Blue, Yellow
-            colorIndex: 0,
-            lastColorChange: 0,
-            colorChangeInterval: 2000, // ms
-            isRunning: false,
-            offsetX: 0,
-            offsetY: 0,
+  <div id="gameUI" class="hidden">
+    <div id="status">অপেক্ষা করুন...</div>
+    <div class="board" id="board"></div>
+    <button id="resetBtn" class="hidden" onclick="location.reload()">🔄 নতুন খেলা</button>
+    <div id="log"></div>
+  </div>
+</div>
 
-            async init() {
-                InputHandler.init();
-                Renderer.init(this.canvas);
-                
-                try {
-                    const response = await fetch('levels.json');
-                    this.levels = await response.json();
-                    this.loadLevel(0);
-                    this.loop();
-                } catch (e) {
-                    console.error("Failed to load levels.json", e);
-                    alert("Error loading levels.json. Make sure you are running this on a local server (e.g., Live Server).");
-                }
-            },
+<script>
+let peer, conn, mySymbol, isMyTurn = false, board = Array(9).fill("");
+const status = document.getElementById('status');
+const log = document.getElementById('log');
 
-            loadLevel(idx) {
-                if (idx >= this.levels.length) {
-                    alert("You beat all levels! Restarting.");
-                    idx = 0;
-                }
-                this.currentLevelIdx = idx;
-                const level = this.levels[idx];
-                
-                // Center the maze
-                const mazeWidth = level.grid[0].length * level.tileSize;
-                const mazeHeight = level.grid.length * level.tileSize;
-                this.offsetX = (this.canvas.width - mazeWidth) / 2;
-                this.offsetY = (this.canvas.height - mazeHeight) / 2;
+function addLog(msg){ log.innerHTML = `<div>[${new Date().toLocaleTimeString()}] ${msg}</div>` + log.innerHTML; }
 
-                // Find start pos
-                for(let r=0; r<level.grid.length; r++){
-                    for(let c=0; c<level.grid[0].length; c++){
-                        if(level.grid[r][c] === 8) {
-                            this.player.x = this.offsetX + c * level.tileSize + level.tileSize/2;
-                            this.player.y = this.offsetY + r * level.tileSize + level.tileSize/2;
-                        }
-                    }
-                }
-                
-                // Reset Player Color
-                this.colorIndex = 0;
-                this.player.color = this.colors[0];
-                this.isRunning = true;
-                
-                // Hide UI messages
-                document.querySelectorAll('.message').forEach(el => el.style.display = 'none');
-            },
+function initBoard(){
+  const boardEl = document.getElementById('board');
+  boardEl.innerHTML = '';
+  for(let i=0;i<9;i++){
+    let c = document.createElement('div');
+    c.className = 'cell';
+    c.dataset.i = i;
+    c.onclick = ()=> makeMove(i);
+    boardEl.appendChild(c);
+  }
+}
 
-            update(deltaTime) {
-                if (!this.isRunning) return;
+function renderBoard(){
+  document.querySelectorAll('.cell').forEach((c,i)=>{
+    c.textContent = board[i];
+    c.className = 'cell' + (board[i] ? ' filled '+board[i].toLowerCase() : '');
+  });
+}
 
-                const level = this.levels[this.currentLevelIdx];
+function checkWin(){
+  const wins = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+  for(let p of ['X','O']){
+    for(let [a,b,c] of wins){
+      if(board[a]===p && board[b]===p && board[c]===p) return p;
+    }
+  }
+  return board.includes('') ? null : 'Draw';
+}
 
-                // 1. Color Cycling Logic
-                if (Date.now() - this.lastColorChange > this.colorChangeInterval) {
-                    this.colorIndex = (this.colorIndex + 1) % this.colors.length;
-                    this.player.color = this.colors[this.colorIndex];
-                    this.lastColorChange = Date.now();
-                }
+function endGame(result){
+  isMyTurn = false;
+  if(result==='Draw'){
+    status.textContent = '🤝 ড্র হয়েছে!';
+    status.style.background = '#f39c12';
+  } else {
+    status.textContent = `🏆 ${result} জিতেছে!`;
+    status.style.background = result===mySymbol ? '#2ecc71' : '#e74c3c';
+  }
+  status.style.color = '#fff';
+  document.getElementById('resetBtn').classList.remove('hidden');
+  addLog(`গেম শেষ: ${result}`);
+}
 
-                // 2. Movement
-                const dir = InputHandler.getDirection();
-                if (dir.x !== 0 || dir.y !== 0) {
-                    Physics.movePlayer(this.player, dir, this.player.speed, level.grid, level.tileSize);
-                }
+function makeMove(pos){
+  if(!isMyTurn || board[pos]!=='') return;
+  board[pos] = mySymbol;
+  renderBoard();
+  isMyTurn = false;
+  status.textContent = `⏳ ${mySymbol==='X'?'O':'X'} এর পালা...`;
+  conn.send({type:'move', pos});
+  addLog(`আপনি চাল দিয়েছেন: ${pos}`);
+  const w = checkWin();
+  if(w) endGame(w);
+}
 
-                // 3. Check Win/Loss
-                // Loss is handled implicitly in movePlayer (collision stops movement), 
-                // but if we wanted "Game Over on touch", we'd check collision separately.
-                // For this puzzle style, stopping at the wall is standard.
-                
-                if (Physics.checkExit(this.player, level.grid, level.tileSize)) {
-                    this.isRunning = false;
-                    document.getElementById('msg-win').style.display = 'block';
-                    setTimeout(() => this.loadLevel(this.currentLevelIdx + 1), 1500);
-                }
-            },
+function setupConnection(c){
+  conn = c;
+  conn.on('data', data=>{
+    if(data.type==='move'){
+      board[data.pos] = (mySymbol==='X'?'O':'X');
+      renderBoard();
+      isMyTurn = true;
+      status.textContent = '✨ আপনার পালা!';
+      status.style.background = '#e8f4fd';
+      status.style.color = '#333';
+      addLog(`অপোনেন্ট চাল দিয়েছে: ${data.pos}`);
+      const w = checkWin();
+      if(w) endGame(w);
+    }
+  });
+  conn.on('close', ()=>{
+    status.textContent = '⚠️ অপোনেন্ট ডিসকানেক্ট হয়েছে';
+    status.style.background = '#e74c3c';
+    addLog('কানেকশন বিচ্ছিন্ন');
+  });
+}
 
-            draw() {
-                Renderer.clear();
-                const level = this.levels[this.currentLevelIdx];
-                
-                Renderer.drawGrid(level.grid, level.tileSize, this.offsetX, this.offsetY);
-                Renderer.drawPlayer(this.player);
-                Renderer.drawUI(level.name, 0);
-            },
+// হোস্ট লজিক
+document.getElementById('hostBtn').onclick = ()=>{
+  peer = new Peer();
+  peer.on('open', id=>{
+    document.getElementById('host-ui').classList.remove('hidden');
+    document.getElementById('peer-id-box').textContent = id;
+    document.getElementById('hostBtn').disabled = true;
+    addLog(`হোস্ট তৈরি: ${id}`);
+  });
+  peer.on('connection', c=>{
+    if(conn) return; // ইতিমধ্যে কেউ জয়েন করেছে
+    setupConnection(c);
+    mySymbol = 'X';
+    isMyTurn = true;
+    document.getElementById('lobby').classList.add('hidden');
+    document.getElementById('gameUI').classList.remove('hidden');
+    initBoard();
+    status.textContent = '✨ আপনার পালা! (X)';
+    addLog('গেস্ট জয়েন করেছে! গেম শুরু।');
+  });
+};
 
-            loop() {
-                this.update();
-                this.draw();
-                requestAnimationFrame(() => this.loop());
-            }
-        };
+// গেস্ট লজিক
+document.getElementById('joinBtn').onclick = ()=>{
+  const hostId = document.getElementById('joinId').value.trim();
+  if(!hostId) return alert('পিয়ার আইডি দিন');
+  peer = new Peer();
+  peer.on('open', ()=>{
+    const c = peer.connect(hostId);
+    c.on('open', ()=>{
+      setupConnection(c);
+      mySymbol = 'O';
+      isMyTurn = false;
+      document.getElementById('lobby').classList.add('hidden');
+      document.getElementById('gameUI').classList.remove('hidden');
+      initBoard();
+      status.textContent = '⏳ হোস্টের অপেক্ষায়... (O)';
+      addLog('হোস্টের সাথে কানেক্টেড!');
+    });
+    c.on('error', ()=> alert('কানেকশন ফেইল! আইডি চেক করুন।'));
+  });
+};
 
-        // Start Game
-        window.onload = () => Game.init();
-
-    </script>
+function copyId(){
+  const id = document.getElementById('peer-id-box').textContent;
+  navigator.clipboard.writeText(id).then(()=> alert('আইডি কপি হয়েছে!'));
+}
+</script>
 </body>
 </html>
